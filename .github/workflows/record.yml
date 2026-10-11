@@ -1,0 +1,135 @@
+name: Record X fixtures
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: >-
+          ALL: every link of links.json (can take tens of minutes).
+          ONLY: the links containing the value.
+          NEW: a temporary fixture for the link given as value.
+        required: true
+        type: choice
+        options: [ALL, ONLY, NEW]
+      value:
+        description: "ONLY: the filter passed to --only. NEW: the x.com link to record. ALL: ignored."
+        type: string
+
+permissions: {}
+
+# One X account is shared by every run: parallel captures would only rate-limit each other.
+concurrency:
+  group: record
+  cancel-in-progress: false
+
+jobs:
+  record:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: main
+    timeout-minutes: 240
+    env:
+      MODE: ${{ inputs.mode }}
+      VALUE: ${{ inputs.value }}
+      LINKS: tool/record/links.json
+    steps:
+      - name: Check the inputs
+        run: |
+          case "$MODE" in
+            ONLY) [ -n "$VALUE" ] || { echo "::error::ONLY needs a filter as value"; exit 1; } ;;
+            NEW) [[ "$VALUE" =~ ^https://x\.com/[^[:space:]]+$ ]] \
+                   || { echo "::error::NEW needs an https://x.com/ link as value"; exit 1; } ;;
+          esac
+
+      - name: Clone QuaX
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          repository: Teskann/QuaX
+          ref: master
+          path: quax
+          persist-credentials: false
+
+      - name: Clone the recorder
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          path: recorder
+          persist-credentials: false
+
+      - name: Install and set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version-file: quax/.fvmrc
+          cache: true
+
+      - name: Install the dependencies
+        working-directory: quax
+        run: |
+          flutter config --no-analytics
+          flutter pub get
+
+      # links.json only tells capture.dart which pages to open: it is left out of the patch. The new
+      # link is the only one in it, as capture.dart opens every link containing the --only text: an
+      # existing https://x.com/foo/media must not be recaptured for https://x.com/foo.
+      - name: Keep only the temporary link
+        if: inputs.mode == 'NEW'
+        working-directory: quax
+        run: |
+          if jq -e --arg url "$VALUE" 'any(.scenarios[]; .url == $url)' "$LINKS" > /dev/null; then
+            echo "::error::$VALUE is already in links.json: use ONLY instead"
+            exit 1
+          fi
+          jq --arg url "$VALUE" \
+            '.scenarios = [{url: $url, description: "TEMPORARY fixture recorded by quax-x-recorder for a demo: never merge it upstream", unstable: true}]' \
+            "$LINKS" > "$RUNNER_TEMP/links.json"
+          mv "$RUNNER_TEMP/links.json" "$LINKS"
+
+      # Chrome runs with a window, as chrome.dart starts it: headless is detectable, hence a virtual
+      # display.
+      - name: Log in to X
+        working-directory: quax
+        env:
+          X_COOKIES: ${{ secrets.X_COOKIES }}
+        run: |
+          cp ../recorder/scripts/inject_cookies.dart tool/record/
+          xvfb-run -a -s '-screen 0 1920x1080x24' dart run tool/record/inject_cookies.dart
+          rm tool/record/inject_cookies.dart
+
+      # Allowed to fail so the patch of a partial capture is still published; the last step fails
+      # the job.
+      - name: Capture
+        id: capture
+        continue-on-error: true
+        working-directory: quax
+        run: |
+          args=()
+          [ "$MODE" = ALL ] || args+=(--only "$VALUE")
+          xvfb-run -a -s '-screen 0 1920x1080x24' dart run tool/record/capture.dart "${args[@]}" < /dev/null
+
+      - name: Make the patch
+        working-directory: quax
+        # NEW keeps only the files it created: the existing fixtures it rewrote (shared operations,
+        # headers, counters) already answer the same requests in the mock.
+        run: |
+          if [ "$MODE" = NEW ]; then git checkout -- .; else git checkout -- "$LINKS"; fi
+          git add -A
+          git diff --cached --binary > "$RUNNER_TEMP/capture.patch"
+          {
+            echo "### Capture ($MODE${VALUE:+: $VALUE})"
+            echo '```'
+            git diff --cached --stat | tail -n 30
+            echo '```'
+            echo 'Apply it at the root of QuaX with `git apply capture.patch`.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the patch
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: capture-patch
+          path: ${{ runner.temp }}/capture.patch
+          if-no-files-found: error
+
+      - name: Fail if the capture failed
+        if: steps.capture.outcome == 'failure'
+        run: |
+          echo "::error::The capture failed: see its step. The patch holds what was recorded anyway."
+          exit 1
