@@ -63,7 +63,9 @@ Future<void> main(List<String> args) async {
       }
       await Future.delayed(_imagesDelay);
       final file = File('${outDir.path}/${_nameFor(url)}.png');
-      file.writeAsBytesSync(await page.screenshot());
+      // The whole page rather than the window: X scrolls to an opened tweet, which would leave the
+      // tweets above it cut and the header across the middle of the picture.
+      file.writeAsBytesSync(await page.screenshot(fullPage: true));
       print('Saved ${file.path}');
     } on Exception catch (error) {
       print('Could not screenshot $url: $error');
