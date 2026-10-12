@@ -14,6 +14,15 @@ on:
       value:
         description: "ONLY: the filter passed to --only. NEW: the x.com link to record. ALL: ignored."
         type: string
+      description:
+        description: >-
+          NEW only: the scenario description. Given, the patch also adds the link to links.json, so
+          the fixture can be committed to QuaX.
+        type: string
+      screenshot:
+        description: "ONLY and NEW only: add a screenshot of each captured link to the artifact."
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -31,6 +40,8 @@ jobs:
     env:
       MODE: ${{ inputs.mode }}
       VALUE: ${{ inputs.value }}
+      DESCRIPTION: ${{ inputs.description }}
+      SCREENSHOT: ${{ inputs.screenshot }}
       LINKS: tool/record/links.json
     steps:
       - name: Check the inputs
@@ -40,6 +51,10 @@ jobs:
             NEW) [[ "$VALUE" =~ ^https://x\.com/[^[:space:]]+$ ]] \
                    || { echo "::error::NEW needs an https://x.com/ link as value"; exit 1; } ;;
           esac
+          [ -z "$DESCRIPTION" ] || [ "$MODE" = NEW ] \
+            || { echo "::error::A description is only used with NEW"; exit 1; }
+          [ "$SCREENSHOT" != true ] || [ "$MODE" != ALL ] \
+            || { echo "::error::Screenshots need ONLY or NEW"; exit 1; }
 
       - name: Clone QuaX
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -67,10 +82,11 @@ jobs:
           flutter config --no-analytics
           flutter pub get
 
-      # links.json only tells capture.dart which pages to open: it is left out of the patch. The new
+      # links.json only tells capture.dart which pages to open: the patch leaves it out. The new
       # link is the only one in it, as capture.dart opens every link containing the --only text: an
-      # existing https://x.com/foo/media must not be recaptured for https://x.com/foo.
-      - name: Keep only the temporary link
+      # existing https://x.com/foo/media must not be recaptured for https://x.com/foo. The scenario is
+      # kept aside for the patch, which adds it to links.json when it has a description.
+      - name: Keep only the new link
         if: inputs.mode == 'NEW'
         working-directory: quax
         run: |
@@ -78,8 +94,12 @@ jobs:
             echo "::error::$VALUE is already in links.json: use ONLY instead"
             exit 1
           fi
-          jq --arg url "$VALUE" \
-            '.scenarios = [{url: $url, description: "TEMPORARY fixture recorded by quax-x-recorder for a demo: never merge it upstream", unstable: true}]' \
+          jq -n --arg url "$VALUE" --arg description "$DESCRIPTION" '{
+            url: $url,
+            description: (if $description == "" then "TEMPORARY fixture recorded by quax-x-recorder for a demo: never merge it upstream" else $description end),
+            unstable: true
+          }' > "$RUNNER_TEMP/scenario.json"
+          jq --slurpfile scenario "$RUNNER_TEMP/scenario.json" '.scenarios = $scenario' \
             "$LINKS" > "$RUNNER_TEMP/links.json"
           mv "$RUNNER_TEMP/links.json" "$LINKS"
 
@@ -105,14 +125,32 @@ jobs:
           [ "$MODE" = ALL ] || args+=(--only "$VALUE")
           xvfb-run -a -s '-screen 0 1920x1080x24' dart run tool/record/capture.dart "${args[@]}" < /dev/null
 
+      # Opens the links again once the capture is over, in the same logged-in profile.
+      - name: Screenshot
+        id: screenshot
+        if: inputs.screenshot
+        continue-on-error: true
+        working-directory: quax
+        run: |
+          cp ../recorder/scripts/screenshot.dart tool/record/
+          xvfb-run -a -s '-screen 0 1920x1080x24' \
+            dart run tool/record/screenshot.dart "$VALUE" "$RUNNER_TEMP/artifact/screenshots"
+          rm tool/record/screenshot.dart
+
       - name: Make the patch
         working-directory: quax
         # NEW keeps only the files it created: the existing fixtures it rewrote (shared operations,
-        # headers, counters) already answer the same requests in the mock.
+        # headers, counters) already answer the same requests in the mock. With a description, the
+        # scenario is appended to links.json as text, so the rest of the file keeps its layout.
         run: |
+          rm -f tool/record/screenshot.dart # left behind by a failed screenshot
           if [ "$MODE" = NEW ]; then git checkout -- .; else git checkout -- "$LINKS"; fi
+          if [ "$MODE" = NEW ] && [ -n "$DESCRIPTION" ]; then
+            python3 ../recorder/scripts/append_scenario.py "$LINKS" "$RUNNER_TEMP/scenario.json"
+          fi
           git add -A
-          git diff --cached --binary > "$RUNNER_TEMP/capture.patch"
+          mkdir -p "$RUNNER_TEMP/artifact"
+          git diff --cached --binary > "$RUNNER_TEMP/artifact/capture.patch"
           {
             echo "### Capture ($MODE${VALUE:+: $VALUE})"
             echo '```'
@@ -125,11 +163,16 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: capture-patch
-          path: ${{ runner.temp }}/capture.patch
+          path: ${{ runner.temp }}/artifact/
           if-no-files-found: error
 
-      - name: Fail if the capture failed
-        if: steps.capture.outcome == 'failure'
+      - name: Fail if the capture or a screenshot failed
+        if: steps.capture.outcome == 'failure' || steps.screenshot.outcome == 'failure'
+        env:
+          CAPTURE: ${{ steps.capture.outcome }}
+          SCREENSHOT_OUTCOME: ${{ steps.screenshot.outcome }}
         run: |
-          echo "::error::The capture failed: see its step. The patch holds what was recorded anyway."
+          [ "$CAPTURE" != failure ] \
+            || echo "::error::The capture failed: see its step. The patch holds what was recorded anyway."
+          [ "$SCREENSHOT_OUTCOME" != failure ] || echo "::error::A screenshot failed: see its step."
           exit 1

@@ -12,9 +12,19 @@ Modes:
 
 - `ALL`: every link of `links.json`. Takes tens of minutes.
 - `ONLY`: the links containing `value`.
-- `NEW`: only the x.com link given as `value`, recorded as a temporary fixture. The patch holds only the files it created. For demos only, never merge it into QuaX.
+- `NEW`: only the x.com link given as `value`, recorded as a temporary fixture. The patch holds only the files it created. For demos only, never merge it into QuaX, unless it has a `description`.
 
-If the capture fails, the patch is still uploaded and the job fails.
+Options:
+
+- `description` (`NEW` only): the description of the scenario, copied into its fixtures. The patch then also adds the link to `links.json`, with `"unstable": true`, so it can be committed to QuaX once reviewed.
+- `screenshot` (`ONLY` and `NEW` only): the artifact also holds a screenshot of each captured link, under `screenshots/`. The page is opened again after the capture, so it may differ a little from the fixtures.
+
+```bash
+gh workflow run record.yml -R quax-bot/quax-x-recorder -f mode=NEW -f value=https://x.com/quax_tests/status/2096000000000000000 \
+  -f description="Quote of a deleted post" -f screenshot=true
+```
+
+If the capture or a screenshot fails, the artifact is still uploaded and the job fails.
 
 ## Setup
 
