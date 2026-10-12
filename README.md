@@ -17,7 +17,7 @@ Modes:
 Options:
 
 - `description` (`NEW` only): the description of the scenario, copied into its fixtures. The patch then also adds the link to `links.json`, with `"unstable": true`, so it can be committed to QuaX once reviewed.
-- `screenshot` (`ONLY` and `NEW` only): the artifact also holds a full-page screenshot of each captured link, under `screenshots/`. The page is opened again after the capture, so it may differ a little from the fixtures.
+- `screenshot` (`ONLY` and `NEW` only): the artifact also holds screenshots of each captured link, under `screenshots/`: the top of the page, then one per scroll, as the capture scrolls. A tweet page is taken whole. The page is opened again after the capture, so it may differ a little from the fixtures.
 
 ```bash
 gh workflow run record.yml -R quax-bot/quax-x-recorder -f mode=NEW -f value=https://x.com/quax_tests/status/2096000000000000000 \
