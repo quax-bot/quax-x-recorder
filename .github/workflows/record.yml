@@ -103,6 +103,23 @@ jobs:
             "$LINKS" > "$RUNNER_TEMP/links.json"
           mv "$RUNNER_TEMP/links.json" "$LINKS"
 
+      - name: Join the tailnet
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Leave through the exit node
+        env:
+          EXIT_NODE: ${{ secrets.TS_EXIT_NODE }}
+        run: |
+          before=$(curl -fsS --max-time 20 https://ifconfig.me)
+          sudo tailscale set --exit-node="$EXIT_NODE"
+          sudo tailscale ping -c 3 "$EXIT_NODE" > /dev/null
+          after=$(curl -fsS --max-time 20 https://ifconfig.me)
+          [ "$before" != "$after" ] || { echo "::error::Traffic still leaves from the runner"; exit 1; }
+
       # Chrome runs with a window, as chrome.dart starts it: headless is detectable, hence a virtual
       # display.
       - name: Log in to X
