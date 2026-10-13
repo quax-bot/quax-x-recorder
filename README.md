@@ -32,3 +32,9 @@ If the capture or a screenshot fails, the artifact is still uploaded and the job
 2. Add the secret `X_COOKIES` to it: the `cookie` request header of a logged-in x.com tab, copied whole from DevTools (Network, any request to x.com).
 
 Use a throwaway X account, as X may lock it. When the session expires, log in again and update the secret.
+
+3. X answers the datacenter address of the runner with a Cloudflare challenge, so the capture leaves through a [Tailscale exit node](https://tailscale.com/docs/features/exit-nodes) at home:
+   - in the tailnet policy, declare `tag:ci` and allow it only `autogroup:internet`;
+   - advertise and approve a machine at home as an exit node, and keep it on during runs;
+   - create an OAuth client with the Auth Keys write scope and the `tag:ci` tag;
+   - add to the `main` environment the secrets `TS_OAUTH_CLIENT_ID`, `TS_OAUTH_SECRET`, and `TS_EXIT_NODE`, the Tailscale address of the exit node.
