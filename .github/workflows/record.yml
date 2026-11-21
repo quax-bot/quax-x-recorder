@@ -23,6 +23,18 @@ on:
         description: "ONLY and NEW only: add a screenshot of each captured link to the artifact."
         type: boolean
         default: false
+      mobile:
+        description: "Record what X sends to Chrome on an Android phone (capture.dart --mobile)."
+        type: boolean
+        default: false
+      repository:
+        description: "Repository of QuaX to run capture.dart from, e.g. a fork."
+        type: string
+        default: Teskann/QuaX
+      ref:
+        description: "Branch, tag or commit of that repository."
+        type: string
+        default: master
 
 permissions: {}
 
@@ -42,6 +54,7 @@ jobs:
       VALUE: ${{ inputs.value }}
       DESCRIPTION: ${{ inputs.description }}
       SCREENSHOT: ${{ inputs.screenshot }}
+      MOBILE: ${{ inputs.mobile }}
       LINKS: tool/record/links.json
     steps:
       - name: Check the inputs
@@ -59,8 +72,8 @@ jobs:
       - name: Clone QuaX
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          repository: Teskann/QuaX
-          ref: master
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
           path: quax
           persist-credentials: false
 
@@ -140,6 +153,7 @@ jobs:
         run: |
           args=()
           [ "$MODE" = ALL ] || args+=(--only "$VALUE")
+          [ "$MOBILE" != true ] || args+=(--mobile)
           xvfb-run -a -s '-screen 0 1920x1080x24' dart run tool/record/capture.dart "${args[@]}" < /dev/null
 
       # Opens the links again once the capture is over, in the same logged-in profile.
