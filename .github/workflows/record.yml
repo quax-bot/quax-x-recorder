@@ -27,14 +27,6 @@ on:
         description: "Record what X sends to Chrome on an Android phone (capture.dart --mobile)."
         type: boolean
         default: false
-      repository:
-        description: "Repository of QuaX to run capture.dart from, e.g. a fork."
-        type: string
-        default: Teskann/QuaX
-      ref:
-        description: "Branch, tag or commit of that repository."
-        type: string
-        default: master
 
 permissions: {}
 
@@ -72,8 +64,8 @@ jobs:
       - name: Clone QuaX
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          repository: ${{ inputs.repository }}
-          ref: ${{ inputs.ref }}
+          repository: Teskann/QuaX
+          ref: master
           path: quax
           persist-credentials: false
 
